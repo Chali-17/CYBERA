@@ -1,0 +1,5 @@
+# Interfaz gráfica (tecnología definida para el proyecto).
+PySide6>=6.7
+
+# Solo para ejecutar las pruebas automatizadas.
+pytest>=8.0
