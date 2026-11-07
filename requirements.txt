@@ -1,5 +1,16 @@
 # Interfaz gráfica (tecnología definida para el proyecto).
 PySide6>=6.7
 
+# Motor de aislamiento real (envenenamiento ARP): construye y transmite tramas.
+# Requiere, además, Npcap instalado y privilegios de administrador (ver README §8).
+scapy>=2.6
+
+# Exportación de reportes a PDF (módulo Reportes): genera los reportes CSV/PDF de la bitácora.
+reportlab>=4.0
+
+# Notificaciones por correo: guarda la contraseña de aplicación de Gmail en el
+# Administrador de credenciales de Windows (nunca en archivos del proyecto).
+keyring>=25
+
 # Solo para ejecutar las pruebas automatizadas.
 pytest>=8.0

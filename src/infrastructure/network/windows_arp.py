@@ -34,10 +34,18 @@ def _ip_a_entero(ip: str) -> int:
     return struct.unpack("<I", socket.inet_aton(ip))[0]
 
 
+# La tabla de vecinos (Get-NetNeighbor, respaldada por CIM/WMI) puede bloquearse
+# mucho en algunos entornos. Es una fuente COMPLEMENTARIA del barrido ARP activo,
+# así que usa un timeout propio y corto, separado del timeout global de PowerShell.
+TIMEOUT_VECINOS_POR_DEFECTO = 5.0
+
+
 class WindowsArpProbe(IArpProbe):
-    def __init__(self, hilos: int = 64, ejecutor_ps=ejecutar_json) -> None:
+    def __init__(self, hilos: int = 64, ejecutor_ps=ejecutar_json,
+                 timeout_vecinos: float = TIMEOUT_VECINOS_POR_DEFECTO) -> None:
         self._hilos = hilos
         self._ejecutar_ps = ejecutor_ps
+        self._timeout_vecinos = timeout_vecinos
         self._send_arp = None
 
     def _funcion_send_arp(self):
@@ -84,7 +92,9 @@ class WindowsArpProbe(IArpProbe):
             "ConvertTo-Json -InputObject $v -Compress"
         )
         observaciones = []
-        for registro in self._ejecutar_ps(script):
+        # Timeout corto propio: si Get-NetNeighbor se agota, la llamada lanza
+        # PowerShellError y el descubrimiento continúa con el barrido ARP activo.
+        for registro in self._ejecutar_ps(script, timeout=self._timeout_vecinos):
             mac, ip = registro.get("Mac"), registro.get("IP")
             if ip and mac and es_mac_valida(mac):
                 observaciones.append(ObservacionRed(

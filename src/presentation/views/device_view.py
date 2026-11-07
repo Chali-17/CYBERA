@@ -12,7 +12,7 @@ from app.models.dispositivo import PerfilDispositivo
 from presentation import formato
 from presentation.estilos import TEXTO
 from presentation.views.review_dialog import RevisarDispositivoDialog
-from presentation.widgets import Panel, PaginaBase, repulir
+from presentation.widgets import Panel, PaginaBase, fuente_negrita, repulir
 
 COLUMNAS = ["Dispositivos conectados", "IP", "MAC", "Fabricante", "Estado", "Acción"]
 # Proporciones de ancho medidas en el Mockup 03.
@@ -58,7 +58,7 @@ class DeviceView(PaginaBase):
     revisarSolicitado = Signal(str)   # MAC
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__("Dispositivos", "Identificación en tiempo real", "CYBERA • Mockup 03", parent)
+        super().__init__("Dispositivos", "Identificación en tiempo real", parent)
         panel = Panel("Dispositivos conectados")
         panel.titulo.setToolTip(AYUDA_LIMITACIONES)
         self._pila = QStackedWidget()
@@ -134,9 +134,7 @@ class DeviceView(PaginaBase):
         if ayuda:
             item.setToolTip(ayuda)
         if negrita:
-            fuente = item.font()
-            fuente.setBold(True)
-            item.setFont(fuente)
+            item.setFont(fuente_negrita())
             item.setForeground(QColor(TEXTO))
         return item
 

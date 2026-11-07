@@ -5,11 +5,15 @@ from __future__ import annotations
 
 from PySide6.QtCore import QObject
 
+from app.controllers.ejecutor_aislamiento import AISLAR, EjecutorAislamiento
+# Reexportados: otros módulos y pruebas los importan desde aquí.
+from app.controllers.mensajes_aislamiento import (texto_contencion_confirmada,  # noqa: F401
+                                                  titulo_error_aislamiento)
 from app.controllers.monitoring_controller import MonitoringController
 from app.models.dispositivo import PerfilDispositivo
 from app.models.dispositivo_confiable import OrigenRegistro
-from app.services.isolation_service import (AislamientoError, AislamientoNoDisponibleError,
-                                            IsolationService)
+from app.services.bitacora_service import BitacoraService
+from app.services.isolation_service import IsolationService
 from app.services.monitoring_service import MonitoringService, ResultadoCiclo, TipoResultado
 from app.services.whitelist_service import DispositivoYaAutorizadoError, WhitelistService
 from presentation.views.review_dialog import ACCION_AISLAR, ACCION_AUTORIZAR
@@ -22,13 +26,21 @@ _ACTOR = "administrador local"
 class DeviceController(QObject):
     def __init__(self, vista, monitoreo: MonitoringController,
                  servicio_monitoreo: MonitoringService, lista_blanca: WhitelistService,
-                 aislamiento: IsolationService, parent: QObject | None = None) -> None:
+                 aislamiento: IsolationService, parent: QObject | None = None,
+                 ejecutor: EjecutorAislamiento | None = None,
+                 bitacora: BitacoraService | None = None) -> None:
         super().__init__(parent)
         self._vista = vista
         self._monitoreo = monitoreo
         self._servicio_monitoreo = servicio_monitoreo
         self._lista_blanca = lista_blanca
         self._aislamiento = aislamiento
+        self._bitacora = bitacora
+        # app/main.py inyecta el ejecutor asíncrono compartido; sin él (pruebas)
+        # se usa uno síncrono con las mismas señales.
+        self._ejecutor = ejecutor or EjecutorAislamiento(aislamiento, asincrono=False, parent=self)
+        self._ejecutor.terminada.connect(self._operacion_terminada)
+        self._ejecutor.fallida.connect(self._operacion_fallida)
         self._actuales: dict[str, PerfilDispositivo] = {}
         monitoreo.resultadoCiclo.connect(self._mostrar_resultado)
         monitoreo.escaneoIniciado.connect(self._vista.mostrar_busqueda)
@@ -72,28 +84,31 @@ class DeviceController(QObject):
             nombre = registro.alias or perfil.hostname or registro.mac
             self._vista.informar("Dispositivo autorizado",
                                  f"«{nombre}» ({registro.mac}) se agregó a la lista blanca.")
+            if self._bitacora is not None:
+                # RI-09: la autorización exitosa queda registrada en la bitácora.
+                self._bitacora.registrar_autorizacion(registro.mac, alias=registro.alias)
         self._refrescar()   # El dispositivo autorizado desaparece de la tabla.
 
     def _aislar(self, mac: str, perfil: PerfilDispositivo) -> None:
+        # Única vía de aislamiento: acción explícita del usuario + confirmación.
         if not self._vista.confirmar_aislamiento(perfil):
             return
-        try:
-            self._aislamiento.aislar(mac, autorizado_por=_ACTOR)
-        except AislamientoNoDisponibleError as error:
-            # El motor de red real no está disponible: el dispositivo NO se marca
-            # como aislado y permanece visible en la tabla.
-            self._vista.advertir("Aislamiento no disponible", str(error))
-            return
-        except AislamientoError as error:
-            self._vista.advertir("No se pudo aislar", str(error))
-            return
-        except Exception as error:  # noqa: BLE001
-            self._vista.advertir("No se pudo aislar", str(error))
-            return
-        else:
-            self._vista.informar("Dispositivo aislado",
-                                 f"El dispositivo {mac} quedó aislado de la red.")
-        self._refrescar()   # El dispositivo aislado desaparece de la tabla.
+        # Se ejecuta fuera del hilo de la interfaz; el resultado llega por señal.
+        if not self._ejecutor.solicitar(AISLAR, mac, _ACTOR, contexto=self):
+            self._vista.advertir("Operación en curso",
+                                 f"Ya hay una operación de aislamiento o desbloqueo en curso "
+                                 f"para {mac}. Espere a que termine.")
+
+    def _operacion_terminada(self, mac: str, tipo: str, contexto, _resultado) -> None:
+        if contexto is self and tipo == AISLAR:
+            self._vista.informar("Contención confirmada", texto_contencion_confirmada(mac))
+        self._refrescar()   # Un dispositivo aislado o desbloqueado cambia la tabla.
+
+    def _operacion_fallida(self, mac: str, tipo: str, contexto, error) -> None:
+        if contexto is self:
+            # En cualquier fallo el dispositivo NO se marca como aislado y sigue
+            # visible en la tabla.
+            self._vista.advertir(titulo_error_aislamiento(error), str(error))
 
     def _refrescar(self) -> None:
         """Recalcula la tabla con el estado confirmado por los repositorios."""

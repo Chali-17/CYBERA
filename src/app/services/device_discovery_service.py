@@ -12,6 +12,7 @@ Ningún dato se inventa: lo que no se obtiene queda en None.
 from __future__ import annotations
 
 import ipaddress
+import logging
 import threading
 import time
 from collections.abc import Callable
@@ -23,6 +24,9 @@ from app.models.dispositivo import FuenteObservacion, ObservacionRed, PerfilDisp
 from app.models.interfaz_red import InterfazRed
 from app.models.mac import es_administrada_localmente, es_mac_de_dispositivo, normalizar_mac
 from infrastructure.interfaces import IArpProbe, IHostnameResolver, IOuiResolver
+from infrastructure.network.powershell import PowerShellError
+
+_log = logging.getLogger(__name__)
 
 # Subredes más grandes que /22 (1022 hosts) no se barren activamente: tardaría
 # demasiado y generaría mucho tráfico. Se usa solo la tabla de vecinos.
@@ -76,7 +80,16 @@ class DeviceDiscoveryService:
         if cancelar.is_set():
             resultado.cancelado = True
             return resultado
-        observaciones += self._sonda.vecinos_alcanzables(interfaz.indice)
+        # Fuente COMPLEMENTARIA (tabla de vecinos, vía PowerShell). Si se agota o
+        # falla, NO debe derribar el ciclo: se registra y el descubrimiento continúa
+        # con el barrido ARP activo. Solo se captura PowerShellError (recuperable);
+        # otros errores se propagan para no ocultar fallos no recuperables.
+        try:
+            observaciones += self._sonda.vecinos_alcanzables(interfaz.indice)
+        except PowerShellError as error:
+            _log.warning("No se pudo consultar la tabla de vecinos de la interfaz %s; "
+                         "el descubrimiento continúa con el barrido ARP activo: %s",
+                         interfaz.indice, error)
         if interfaz.mac:
             observaciones.append(ObservacionRed(interfaz.ipv4, interfaz.mac,
                                                 FuenteObservacion.INTERFAZ_LOCAL))

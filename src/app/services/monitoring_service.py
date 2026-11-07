@@ -17,6 +17,8 @@ from typing import Protocol
 from app.models.dispositivo import PerfilDispositivo
 from app.models.interfaz_red import InterfazRed
 from app.models.inventario import InventarioTemporal
+from app.services import inventario_compartido
+from app.services.bitacora_service import BitacoraService
 from app.services.device_discovery_service import (DeviceDiscoveryService,
                                                    InterfazNoDisponibleError,
                                                    ResultadoDescubrimiento)
@@ -35,6 +37,12 @@ class FuenteAislamiento(Protocol):
     """Expone las MAC con aislamiento activo (IsolationService lo cumple)."""
 
     def macs_aisladas(self) -> set[str]: ...
+
+
+class NotificadorDispositivos(Protocol):
+    """Recibe el grupo de dispositivos nuevos de un ciclo (NotificacionService)."""
+
+    def notificar_nuevos(self, perfiles: list[PerfilDispositivo]) -> None: ...
 
 
 class _SinAislamiento:
@@ -67,7 +75,9 @@ class MonitoringService:
                  descubrimiento: DeviceDiscoveryService, lista_blanca: WhitelistService,
                  aislamiento: FuenteAislamiento | None = None,
                  inventario: InventarioTemporal | None = None,
-                 reloj: Callable[[], datetime] = datetime.now) -> None:
+                 reloj: Callable[[], datetime] = datetime.now,
+                 bitacora: BitacoraService | None = None,
+                 notificaciones: "NotificadorDispositivos | None" = None) -> None:
         self._configuracion = configuracion
         self._interfaces = interfaces
         self._descubrimiento = descubrimiento
@@ -75,6 +85,8 @@ class MonitoringService:
         self._aislamiento = aislamiento or _SinAislamiento()
         self._inventario = inventario or InventarioTemporal(CICLOS_TOLERANCIA)
         self._reloj = reloj
+        self._bitacora = bitacora
+        self._notificaciones = notificaciones
         self._interfaz_actual: str | None = None
         self._lock = threading.Lock()
 
@@ -132,7 +144,12 @@ class MonitoringService:
         if detalle.cancelado or cancelar.is_set():
             return ResultadoCiclo(TipoResultado.CANCELADO, interfaz=interfaz)
 
+        # Publica MAC → IP para que el motor ARP pueda dirigir el envenenamiento
+        # a la IP real del objetivo (el inventario no se persiste).
+        inventario_compartido.publicar(detalle.perfiles)
+        anteriores = self._inventario.macs()
         self._inventario.actualizar(detalle.perfiles, self._reloj().replace(microsecond=0))
+        self._registrar_transiciones(anteriores, detalle.perfiles)
         try:
             visibles = self._filtrar()
         except Exception as error:  # noqa: BLE001
@@ -148,11 +165,61 @@ class MonitoringService:
         excluidas = set(self._lista_blanca.autorizados()) | self._aislamiento.macs_aisladas()
         return self._inventario.visibles(excluidas)
 
+    def _registrar_transiciones(self, anteriores: set[str],
+                                 perfiles: list[PerfilDispositivo]) -> None:
+        """Registra CONEXION / DESCONEXION según los cambios reales del inventario temporal.
+
+        Sólo se emite un evento en las transiciones (entrada o salida del inventario):
+        nunca en cada ciclo con el mismo conjunto de dispositivos. Los errores de
+        escritura en la bitácora no se propagan (el servicio registra y avisa).
+
+        Los dispositivos que entran por primera vez al inventario (realmente nuevos,
+        no una actualización de uno ya conocido ni el propio equipo) forman UN grupo
+        y se notifican por correo con un único mensaje.
+        """
+        actuales = {p.mac for p in perfiles}
+        nuevos: list[PerfilDispositivo] = []
+        for perfil in sorted(perfiles, key=lambda p: p.mac):
+            if perfil.mac in anteriores or perfil.es_este_equipo:
+                continue        # Esta MAC ya estaba en el inventario o es el propio equipo.
+            nuevos.append(perfil)
+
+        if self._bitacora is not None:
+            for mac in sorted(anteriores - actuales):
+                # Desconexión: ya no se observa la MAC (se retiró del inventario por
+                # agotar los ciclos de tolerancia). El nombre no está disponible.
+                self._bitacora.registrar_desconexion(mac)
+            for perfil in nuevos:
+                self._bitacora.registrar_conexion(perfil.mac, perfil.ip,
+                                                  perfil.hostname or perfil.alias or perfil.mac)
+
+        # Un solo correo por grupo de dispositivos nuevos. Un fallo del notificador
+        # nunca detiene el monitoreo.
+        if self._notificaciones is not None and nuevos:
+            try:
+                self._notificaciones.notificar_nuevos(nuevos)
+            except Exception:  # noqa: BLE001
+                _log.exception("No se pudo encolar la notificación de dispositivos nuevos")
+
     def reclasificar(self) -> list[PerfilDispositivo]:
         """Recalcula la lista visible desde el inventario y los repositorios, sin escanear."""
         return self._filtrar()
 
+    def cantidad_detectados(self) -> int:
+        """Dispositivos presentes ahora en el inventario temporal (autorizados,
+        desconocidos y aislados). Lo usa la pantalla Resumen."""
+        return len(self._inventario)
+
+    def perfil_detectado(self, mac: str) -> PerfilDispositivo | None:
+        """Datos en vivo de una MAC si está detectada ahora (aunque esté excluida).
+
+        Permite a Lista blanca mostrar IP/fabricante/hostname reales cuando el
+        equipo autorizado se encuentra en la red; si no, devuelve None.
+        """
+        return self._inventario.obtener(mac)
+
     def detener(self) -> None:
         """Descarta el inventario temporal (monitoreo desactivado o cierre)."""
         self._inventario.limpiar()
+        inventario_compartido.limpiar()
         self._interfaz_actual = None

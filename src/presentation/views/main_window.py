@@ -10,10 +10,10 @@ from app.controllers.monitoring_controller import EstadoIndicador
 from presentation.estilos import ANCHO_BARRA_LATERAL
 from presentation.widgets import PaginaBase
 
-# Orden del Mockup. Solo Dispositivos y Configuración están implementados;
-# las demás opciones se muestran de forma estática.
-OPCIONES = ["Resumen", "Dispositivos", "Lista blanca", "Alertas", "Aislamiento",
-            "Bitácora", "Reportes", "Configuración"]
+# Orden del Mockup. Las opciones sin página se muestran de forma estática.
+# «Alertas» se retiró del alcance funcional (sus funciones son redundantes con Dispositivos).
+OPCIONES = ["Resumen", "Dispositivos", "Lista blanca", "Aislamiento",
+            "Bitácora", "Reportes", "Configuración", "Ayuda"]
 _PENDIENTE = "Módulo pendiente de desarrollo."
 
 

@@ -17,7 +17,7 @@ from app.models.dispositivo_confiable import DispositivoConfiable, OrigenRegistr
 from app.services.isolation_service import (AislamientoError, AislamientoFallidoError,
                                             AislamientoNoDisponibleError, DispositivoProtegidoError,
                                             IsolationService)
-from infrastructure.interfaces import EstadoRed, INetworkIsolation
+from infrastructure.interfaces import EstadoContencion, INetworkIsolation
 from infrastructure.persistence.isolation_repository import JsonIsolationRepository
 from infrastructure.persistence.whitelist_repository import JsonWhitelistRepository
 
@@ -32,12 +32,14 @@ class MotorDoble(INetworkIsolation):
         self.confirma = confirma
         self.falla_isolate = falla_isolate
         self.aisladas: set[str] = set()
+        self.conocidas: set[str] = set()   # Contrato H3: lo desconocido es DESCONOCIDO.
         self.llamadas: list[str] = []
 
     def isolate(self, mac):
         self.llamadas.append(mac)
         if self.falla_isolate:
             raise OSError("se requieren privilegios de administrador")
+        self.conocidas.add(mac)
         if self.confirma:
             self.aisladas.add(mac)
 
@@ -45,7 +47,11 @@ class MotorDoble(INetworkIsolation):
         self.aisladas.discard(mac)
 
     def status(self, mac):
-        return EstadoRed.AISLADO if mac in self.aisladas else EstadoRed.ACTIVO
+        if mac in self.aisladas:
+            return EstadoContencion.CONTENCION_APLICADA
+        if mac in self.conocidas:
+            return EstadoContencion.SIN_CONTENCION
+        return EstadoContencion.DESCONOCIDO
 
 
 def _servicio(tmp_path, motor=None):
@@ -119,9 +125,13 @@ def test_motor_no_confirma_no_persiste(tmp_path):
 def test_motor_falla_no_persiste(tmp_path):
     motor = MotorDoble(falla_isolate=True)
     servicio, repo, _ = _servicio(tmp_path, motor=motor)
-    with pytest.raises(OSError):
+    # El error del motor se envuelve en AislamientoFallidoError (antes se
+    # propagaba el OSError tal cual); el OSError original se conserva como causa.
+    with pytest.raises(AislamientoFallidoError) as error:
         servicio.aislar(MAC, "u")
+    assert isinstance(error.value.__cause__, OSError)
     assert repo.macs_activas() == set()
+    assert [o.motivo_fallo.value for o in repo.operaciones(MAC)] == ["ERROR_MOTOR"]
 
 
 def test_aislamiento_confirmado_persiste(tmp_path):

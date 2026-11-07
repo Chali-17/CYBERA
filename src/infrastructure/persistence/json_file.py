@@ -13,6 +13,16 @@ class ArchivoDatosError(Exception):
     """El archivo existe pero no se puede leer o escribir de forma segura."""
 
 
+_candados: dict[str, threading.RLock] = {}
+_candado_registro = threading.Lock()
+
+
+def _candado_de(ruta: Path) -> threading.RLock:
+    clave = os.path.normcase(os.path.abspath(ruta))
+    with _candado_registro:
+        return _candados.setdefault(clave, threading.RLock())
+
+
 class JsonFile:
     """Lectura y escritura atómica de un archivo JSON.
 
@@ -24,7 +34,9 @@ class JsonFile:
 
     def __init__(self, ruta: Path) -> None:
         self.ruta = Path(ruta)
-        self.lock = threading.RLock()
+        # Un candado por archivo en todo el proceso: dos JsonFile sobre la misma
+        # ruta (p. ej. dos repositorios) comparten candado y no pierden escrituras.
+        self.lock = _candado_de(self.ruta)
 
     def leer(self) -> Any | None:
         with self.lock:

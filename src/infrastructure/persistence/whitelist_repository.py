@@ -64,3 +64,21 @@ class JsonWhitelistRepository(IWhitelistRepository):
         with self._archivo.lock:
             actuales = self._leer_todos()
             self._guardar_todos([d for d in actuales if d.mac != mac])
+
+    def actualizar_alias(self, mac: str, alias: str | None) -> DispositivoConfiable:
+        """Reemplaza el alias conservando MAC, fecha, origen y estado (no duplica)."""
+        import dataclasses
+        mac = normalizar_mac(mac)
+        with self._archivo.lock:
+            actuales = self._leer_todos()
+            nuevos, actualizado = [], None
+            for d in actuales:
+                if d.mac == mac and d.activo:
+                    actualizado = dataclasses.replace(d, alias=alias)
+                    nuevos.append(actualizado)
+                else:
+                    nuevos.append(d)
+            if actualizado is None:
+                raise ValueError(f"La MAC {mac} no está en la lista blanca.")
+            self._guardar_todos(nuevos)
+            return actualizado

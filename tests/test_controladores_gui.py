@@ -323,6 +323,22 @@ def test_navegacion_estatica(qapp, app):
     assert set(app.ventana.botones) == {"Dispositivos", "Configuración"}
 
 
+def test_alertas_retirada_de_la_navegacion(qapp):
+    from presentation.views.main_window import OPCIONES
+
+    # «Alertas» fue retirada del alcance: ni como opción activa ni como etiqueta estática.
+    assert "Alertas" not in OPCIONES
+    paginas = {"Dispositivos": DeviceView(), "Configuración": SettingsView()}
+    ventana = MainWindow(paginas)
+    assert "Alertas" not in ventana.botones
+    etiquetas = {w.text() for w in ventana.findChildren(type(ventana.botones["Dispositivos"]))}
+    assert "Alertas" not in etiquetas
+    from PySide6.QtWidgets import QLabel
+    textos_estaticos = {w.text() for w in ventana.findChildren(QLabel)}
+    assert "Alertas" not in textos_estaticos
+    ventana.hide()
+
+
 def test_seleccion_de_interfaz_se_conserva(qapp, tmp_path):
     # Primera ejecución: se guarda la Wi-Fi.
     a = App(tmp_path)

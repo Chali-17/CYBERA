@@ -84,6 +84,12 @@ class InventarioTemporal:
         with self._lock:
             return set(self._entradas)
 
+    def obtener(self, mac: str) -> PerfilDispositivo | None:
+        """Perfil detectado para ``mac`` (aunque esté excluido de la tabla), o None."""
+        with self._lock:
+            entrada = self._entradas.get(mac)
+            return entrada.perfil.copia() if entrada is not None else None
+
     def limpiar(self) -> None:
         with self._lock:
             self._entradas.clear()

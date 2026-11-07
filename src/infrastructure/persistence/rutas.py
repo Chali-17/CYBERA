@@ -10,6 +10,9 @@ VARIABLE_DIRECTORIO = "CYBERA_DATOS"
 ARCHIVO_CONFIGURACION = "configuracion.json"
 ARCHIVO_LISTA_BLANCA = "lista_blanca.json"
 ARCHIVO_AISLAMIENTOS = "aislamientos.json"
+ARCHIVO_BITACORA = "bitacora.json"
+ARCHIVO_NOTIFICACIONES = "notificaciones.json"
+CARPETA_REPORTES = "reportes"
 
 
 def directorio_datos() -> Path:
